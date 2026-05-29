@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "env": {
+    "NODE_ENV": "production",
+    "CLAUDE_API_KEY": "@claude_api_key",
+    "POWER_BI_API_KEY": "@power_bi_api_key",
+    "DATABASE_URL": "@database_url"
+  },
+  "functions": {
+    "src/server.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/dist/server.js"
+    },
+    {
+      "src": "/health",
+      "dest": "/dist/server.js"
+    },
+    {
+      "src": "/",
+      "dest": "/dist/server.js"
+    }
+  ]
+}

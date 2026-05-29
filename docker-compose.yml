@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:3000/api
+    volumes:
+      - .:/app
+      - /app/node_modules
+    command: npm run dev
+    depends_on:
+      - backend
+    networks:
+      - powerbi-network
+
+  # Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY}
+      - CORS_ORIGIN=http://localhost:5173
+      - DATABASE_URL=mongodb://mongodb:27017/powerbi-ai
+    depends_on:
+      - mongodb
+    networks:
+      - powerbi-network
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # MongoDB
+  mongodb:
+    image: mongo:7.0-alpine
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+      - MONGO_INITDB_DATABASE=powerbi-ai
+    volumes:
+      - mongodb_data:/data/db
+      - ./init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+    networks:
+      - powerbi-network
+    healthcheck:
+      test: ['CMD', 'mongosh', '--eval', 'db.adminCommand("ping")']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis (optional - for caching)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - powerbi-network
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongodb_data:
+  redis_data:
+
+networks:
+  powerbi-network:
+    driver: bridge

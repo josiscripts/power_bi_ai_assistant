@@ -1,0 +1,3 @@
+# Testing Setup - Frontend
+
+Voy a crear la configuración de testing para el frontend...
