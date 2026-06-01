@@ -15,6 +15,18 @@ export const MainMenu: React.FC = () => {
 
   const menuItems: MenuItem[] = [
     {
+      id: 'data',
+      label: 'Explorador de Datos',
+      description: 'Carga y analiza tus datos con IA',
+      icon: (
+        <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zm-5.04-6.71l-2.75 3.54h2.86v2.14h-4.41v-2.14h2.75l-3.54-4.29h-2.75V7.42h4.41v2.14h-2.75l2.75 3.54 2.75-3.54h-2.86V7.42h4.41v2.14h-2.75z" />
+        </svg>
+      ),
+      fromColor: '#8b5cf6',
+      toColor: '#7c3aed',
+    },
+    {
       id: 'pbix',
       label: 'Análisis de .pbix',
       description: 'Analiza tu archivo Power BI',
@@ -95,7 +107,7 @@ export const MainMenu: React.FC = () => {
         <p className="text-gray-600">Selecciona el módulo que necesitas para comenzar</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
         {menuItems.map((item) => (
           <button
             key={item.id}

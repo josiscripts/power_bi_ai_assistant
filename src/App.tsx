@@ -9,6 +9,7 @@ import { ModuloTraducciones } from '@components/ModuloTraducciones/ModuloTraducc
 import { ModuloRutasDinamicas } from '@components/ModuloRutasDinamicas/ModuloRutasDinamicas';
 import { ModuloFiltros } from '@components/ModuloFiltros/ModuloFiltros';
 import { ModuloAnalisisPBIX } from '@components/ModuloAnalisisPBIX/ModuloAnalisisPBIX';
+import { DataExplorer } from '@components/DataExplorer/DataExplorer';
 
 export const App: React.FC = () => {
   const { activeModule } = useAppStore();
@@ -17,6 +18,8 @@ export const App: React.FC = () => {
     switch (activeModule) {
       case 'pbix':
         return <ModuloAnalisisPBIX />;
+      case 'data':
+        return <DataExplorer />;
       case 'graficos':
         return <ModuloDisenoGraficos />;
       case 'dax':

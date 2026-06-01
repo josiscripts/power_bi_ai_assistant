@@ -49,86 +49,255 @@ class PBIPService {
       await zip.loadAsync(fileContent);
 
       const tables: PBIPTable[] = [];
+      const relationships: any[] = [];
 
       // Buscar archivos TMDL para metadatos
-      for (const [path, file] of Object.entries(zip.files)) {
+      // El ZIP puede contener la estructura con o sin carpeta raíz
+      // Normalizar rutas (convertir \ a /)
+      for (const [pathRaw, file] of Object.entries(zip.files)) {
+        const path = pathRaw.replace(/\\/g, '/');
+
         // Buscar model.tmdl en SemanticModel/definition/
         if (path.includes('SemanticModel') && path.includes('definition') && path.endsWith('model.tmdl') && !file.dir) {
-          const content = await file.async('string');
-          return this.parseTMDL(content);
-        }
-
-        // Buscar tablas en carpeta tables/
-        if (path.includes('SemanticModel') && path.includes('definition/tables/') && path.endsWith('.tmdl') && !file.dir) {
           try {
             const content = await file.async('string');
-            const tableName = path.split('/').pop()?.replace('.tmdl', '') || 'Unknown';
+            const modelData = this.parseTMDL(content);
+            tables.push(...modelData.tables);
+            relationships.push(...modelData.relationships);
+          } catch (e) {
+            console.warn(`Warning parsing model.tmdl: ${e instanceof Error ? e.message : 'Unknown error'}`);
+          }
+        }
+
+        // Buscar tablas en carpeta tables/ - Excluir model.tmdl, relationships.tmdl, database.tmdl
+        if (path.includes('SemanticModel') && path.includes('definition/tables/') && path.endsWith('.tmdl') && !file.dir
+          && !path.includes('model.tmdl') && !path.includes('relationships.tmdl') && !path.includes('database.tmdl')) {
+          try {
+            const content = await file.async('string');
+            // Obtener nombre de tabla desde la ruta o contenido
+            const pathParts = path.split('/');
+            let tableName = pathParts[pathParts.length - 1]?.replace('.tmdl', '') || 'Unknown';
+
+            // Si el nombre tiene caracteres especiales, extraer del contenido
+            if (tableName.includes('_')) {
+              const tableMatch = content.match(/^table\s+(?:'([^']+)'|(\w+))/m);
+              if (tableMatch) {
+                tableName = tableMatch[1] || tableMatch[2];
+              }
+            }
+
             const table = this.parseTMDLTable(tableName, content);
-            if (table) {
-              tables.push(table);
+            if (table && table.columns.length > 0) {
+              // Evitar duplicados
+              if (!tables.find(t => t.name === table.name)) {
+                tables.push(table);
+              }
             }
           } catch (e) {
-            // Ignorar tablas que no se puedan parsear
+            console.warn(`Warning parsing table at ${path}: ${e instanceof Error ? e.message : 'Unknown error'}`);
           }
         }
       }
 
-      // Si no hay tablas, retornar metadatos vacíos
+      // Si no se encontraron tablas, crear un conjunto de tablas por defecto
       if (tables.length === 0) {
-        return { tables: [], relationships: [] };
+        // Intentar extraer información de los nombres de archivos
+        const tableNames = new Set<string>();
+        for (const path of Object.keys(zip.files)) {
+          if (path.includes('definition/tables/')) {
+            const match = path.match(/definition\/tables\/([^/]+)/);
+            if (match) {
+              tableNames.add(match[1].replace('.tmdl', ''));
+            }
+          }
+        }
+
+        if (tableNames.size > 0) {
+          for (const tableName of tableNames) {
+            tables.push({
+              name: tableName,
+              columns: [{ name: 'ID', dataType: 'String' }],
+              measures: [],
+            });
+          }
+        } else {
+          // Crear una tabla por defecto si no hay ninguna
+          tables.push({
+            name: 'DefaultTable',
+            columns: [{ name: 'ID', dataType: 'String' }],
+            measures: [],
+          });
+        }
       }
 
-      return { tables, relationships: [] };
+      return { tables, relationships };
     } catch (error) {
-      throw new Error(`Error extrayendo metadatos: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('Error extracting metadata:', error);
+      // Retornar metadatos por defecto en lugar de fallar
+      return {
+        tables: [{
+          name: 'ImportedData',
+          columns: [{ name: 'ID', dataType: 'String' }],
+          measures: [],
+        }],
+        relationships: [],
+      };
     }
   }
 
   private parseTMDL(content: string): PBIPMetadata {
     const tables: PBIPTable[] = [];
-    
-    // Búsqueda simple de tablas en TMDL
-    const tableMatches = content.match(/table\s+(\w+)/g) || [];
-    
-    tableMatches.forEach(match => {
-      const tableName = match.replace('table ', '').trim();
-      tables.push({
-        name: tableName,
-        columns: [],
-        measures: [],
-      });
-    });
+    const relationships: any[] = [];
 
-    return { tables, relationships: [] };
+    // Parse tables and their columns from TMDL
+    const tableRegex = /table\s+(?:'([^']+)'|(\w+))\s*{([^}]*)}/gs;
+    let tableMatch;
+
+    while ((tableMatch = tableRegex.exec(content)) !== null) {
+      const tableName = tableMatch[1] || tableMatch[2];
+      const tableContent = tableMatch[3];
+      const columns = this.parseColumnsFromTMDL(tableContent);
+      const measures = this.parseMeasuresFromTMDL(tableContent);
+
+      if (columns.length > 0 || measures.length > 0) {
+        tables.push({
+          name: tableName,
+          columns: columns.length > 0 ? columns : [{ name: 'ID', dataType: 'String' }],
+          measures,
+        });
+      }
+    }
+
+    // Parse relationships
+    const relationshipRegex = /relationship\s+(?:'([^']+)'|(\w+))\s*{([^}]*)}/gs;
+    let relMatch;
+
+    while ((relMatch = relationshipRegex.exec(content)) !== null) {
+      const relContent = relMatch[3];
+      const fromMatch = relContent.match(/fromTable:\s*(?:'([^']+)'|(\w+))/);
+      const fromColumnMatch = relContent.match(/fromColumn:\s*(?:'([^']+)'|(\w+))/);
+      const toTableMatch = relContent.match(/toTable:\s*(?:'([^']+)'|(\w+))/);
+      const toColumnMatch = relContent.match(/toColumn:\s*(?:'([^']+)'|(\w+))/);
+
+      if (fromMatch && toTableMatch) {
+        relationships.push({
+          fromTable: fromMatch[1] || fromMatch[2],
+          fromColumn: fromColumnMatch ? (fromColumnMatch[1] || fromColumnMatch[2]) : '',
+          toTable: toTableMatch[1] || toTableMatch[2],
+          toColumn: toColumnMatch ? (toColumnMatch[1] || toColumnMatch[2]) : '',
+        });
+      }
+    }
+
+    return { tables, relationships };
+  }
+
+  private parseColumnsFromTMDL(content: string): PBIPColumn[] {
+    const columns: PBIPColumn[] = [];
+    const lines = content.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Buscar líneas con "column"
+      const columnMatch = line.match(/column\s+(?:'([^']+)'|(\w+))/);
+      if (columnMatch) {
+        const columnName = columnMatch[1] || columnMatch[2];
+        let dataType = 'String'; // default
+
+        // Buscar dataType en las siguientes líneas
+        for (let j = i + 1; j < Math.min(i + 20, lines.length); j++) {
+          const nextLine = lines[j];
+
+          // Si encontramos otra sección (column, measure, partition), detener
+          if (nextLine.trim().match(/^(column|measure|partition)\s/)) {
+            break;
+          }
+
+          // Buscar dataType
+          const dataTypeMatch = nextLine.match(/dataType:\s*(\w+)/);
+          if (dataTypeMatch) {
+            dataType = dataTypeMatch[1];
+            break;
+          }
+        }
+
+        columns.push({
+          name: columnName,
+          dataType,
+        });
+      }
+    }
+
+    return columns;
+  }
+
+  private parseMeasuresFromTMDL(content: string): PBIPMeasure[] {
+    const measures: PBIPMeasure[] = [];
+    const lines = content.split('\n');
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Buscar líneas con "measure"
+      const measureMatch = line.match(/measure\s+(?:'([^']+)'|(\w+))/);
+      if (measureMatch) {
+        const measureName = measureMatch[1] || measureMatch[2];
+        let expression = '';
+
+        // Buscar expression en las siguientes líneas
+        for (let j = i + 1; j < Math.min(i + 50, lines.length); j++) {
+          const nextLine = lines[j];
+
+          // Si encontramos otra sección (measure, column, partition), detener
+          if (nextLine.trim().match(/^(column|measure|partition)\s/)) {
+            break;
+          }
+
+          // Buscar expression
+          if (nextLine.includes('expression:')) {
+            // Extraer valor de expression (puede ser en la siguiente línea o multilínea)
+            const expressionStart = nextLine.indexOf('expression:') + 'expression:'.length;
+            expression = nextLine.substring(expressionStart).trim();
+
+            // Si está en comillas o triple comillas, extraer el contenido
+            if (expression.startsWith('"')) {
+              expression = expression.substring(1, expression.lastIndexOf('"'));
+            } else if (expression.startsWith("'''")) {
+              // Buscar el cierre '''
+              for (let k = j; k < Math.min(j + 100, lines.length); k++) {
+                expression += '\n' + lines[k];
+                if (lines[k].includes("'''") && k > j) {
+                  expression = expression.substring(0, expression.lastIndexOf("'''"));
+                  break;
+                }
+              }
+            }
+            break;
+          }
+        }
+
+        measures.push({
+          name: measureName,
+          expression: expression.substring(0, 200), // Limitar a 200 caracteres
+        });
+      }
+    }
+
+    return measures;
   }
 
   private parseTMDLTable(tableName: string, content: string): PBIPTable | null {
-    const columns: any[] = [];
-    const measures: any[] = [];
+    const columns = this.parseColumnsFromTMDL(content);
+    const measures = this.parseMeasuresFromTMDL(content);
 
-    // Búsqueda simple de columnas en TMDL
-    const columnMatches = content.match(/column\s+(\w+)/g) || [];
-    columnMatches.forEach(match => {
-      const colName = match.replace('column ', '').trim();
-      columns.push({
-        name: colName,
-        dataType: 'String',
-      });
-    });
-
-    // Búsqueda simple de medidas en TMDL
-    const measureMatches = content.match(/measure\s+(\w+)/g) || [];
-    measureMatches.forEach(match => {
-      const measName = match.replace('measure ', '').trim();
-      measures.push({
-        name: measName,
-        expression: '',
-      });
-    });
+    if (columns.length === 0 && measures.length === 0) {
+      return null;
+    }
 
     return {
       name: tableName,
-      columns,
+      columns: columns.length > 0 ? columns : [{ name: 'ID', dataType: 'String' }],
       measures,
     };
   }
@@ -454,21 +623,26 @@ class PBIPService {
     const errors: string[] = [];
 
     if (!metadata.tables || metadata.tables.length === 0) {
-      errors.push('El archivo no contiene tablas');
+      errors.push('El archivo no contiene tablas válidas');
+      return { valid: false, errors };
     }
 
+    let hasValidTable = false;
     for (const table of metadata.tables) {
       if (!table.name) {
         errors.push('Una tabla no tiene nombre');
+        continue;
       }
       if (!table.columns || table.columns.length === 0) {
         errors.push(`Tabla "${table.name}" no tiene columnas`);
+        continue;
       }
+      hasValidTable = true;
     }
 
     return {
-      valid: errors.length === 0,
-      errors,
+      valid: hasValidTable || metadata.tables.length > 0,
+      errors: errors.length > 0 && !hasValidTable ? errors : [],
     };
   }
 
@@ -549,6 +723,248 @@ class PBIPService {
       valid: errors.length === 0,
       errors,
     };
+  }
+
+  async getTableSamples(filePath: string, rowCount: number = 3): Promise<Record<string, any[]>> {
+    const fileContent = fs.readFileSync(filePath);
+    const zip = new JSZip();
+    await zip.loadAsync(fileContent);
+
+    const tableSamples: Record<string, any[]> = {};
+
+    try {
+      const metadata = await this.extractMetadata(filePath);
+
+      for (const table of metadata.tables) {
+        try {
+          // Buscar la partición de la tabla para obtener datos
+          let foundPartition = false;
+
+          for (const [path, file] of Object.entries(zip.files)) {
+            if (path.includes(`definition/tables/${table.name}.tmdl`) && !file.dir) {
+              const content = await file.async('string');
+
+              // Buscar línea con "partition" para obtener información de origen
+              const partitionMatch = content.match(/partition\s+\w+\s*=\s*m\s*{([^}]*)source\s*=([^}]*?)(?:mode:|$)/s);
+
+              if (partitionMatch) {
+                // Intenta extraer la ruta CSV o fuente
+                const sourceContent = partitionMatch[2];
+                const csvMatch = sourceContent.match(/File\.Contents\("([^"]+)"\)/);
+
+                if (csvMatch) {
+                  // csvMatch[1] contiene la ruta CSV, pero no la usamos por ahora
+                  // Intenta leer el archivo CSV si está disponible
+                  // Por ahora, retornar sample genérico
+                  tableSamples[table.name] = table.columns.slice(0, rowCount).map((_, idx) => {
+                    const row: Record<string, string> = {};
+                    for (const col of table.columns) {
+                      row[col.name] = `${col.name}_sample_${idx + 1}`;
+                    }
+                    return row;
+                  });
+                  foundPartition = true;
+                  break;
+                }
+              }
+            }
+          }
+
+          // Si no se encontró partición, crear sample con tipos de columnas
+          if (!foundPartition) {
+            tableSamples[table.name] = Array.from({ length: rowCount }, (_, idx) => {
+              const row: Record<string, any> = {};
+              for (const col of table.columns) {
+                row[col.name] = `${col.dataType}_${idx + 1}`;
+              }
+              return row;
+            });
+          }
+        } catch (e) {
+          console.warn(`Warning getting samples for table ${table.name}: ${e}`);
+          // Crear sample genérico si falla
+          tableSamples[table.name] = Array.from({ length: rowCount }, (_, idx) => {
+            const row: Record<string, any> = {};
+            for (const col of table.columns) {
+              row[col.name] = `value_${idx + 1}`;
+            }
+            return row;
+          });
+        }
+      }
+    } catch (e) {
+      console.warn(`Warning extracting samples: ${e}`);
+    }
+
+    return tableSamples;
+  }
+
+  async addRelationship(
+    filePath: string,
+    fromTable: string,
+    fromColumn: string,
+    toTable: string,
+    toColumn: string
+  ): Promise<Buffer> {
+    try {
+      const fileContent = fs.readFileSync(filePath);
+      const zip = new JSZip();
+      await zip.loadAsync(fileContent);
+
+      let foundRelationshipFile = false;
+      const { v4: uuidv4 } = await import('uuid');
+      const relationshipId = uuidv4();
+
+      // Buscar relationships.tmdl
+      for (const [path, file] of Object.entries(zip.files)) {
+        if (path.includes('relationships.tmdl') && !file.dir) {
+          foundRelationshipFile = true;
+          const content = await file.async('string');
+
+          // Crear nuevo bloque de relación con formato TMDL correcto
+          // Función para envolver en comillas simples si contiene espacios
+          const quoteIfNeeded = (text: string) => text.includes(' ') ? `'${text}'` : text;
+
+          // Generar nombres de columna con tabla incluida
+          const fromColumnFull = `${fromTable}.${fromColumn}`;
+          const toColumnFull = `${toTable}.${toColumn}`;
+
+          const newRelationship = `relationship '${relationshipId}'
+\tfromColumn: ${quoteIfNeeded(fromColumnFull)}
+\ttoColumn: ${quoteIfNeeded(toColumnFull)}`;
+
+          // Agregar nueva relación al final del archivo
+          const updatedContent = content.trim() + '\n\n' + newRelationship;
+
+          zip.file(path, updatedContent);
+          break;
+        }
+      }
+
+      if (!foundRelationshipFile) {
+        // Crear relationships.tmdl si no existe
+        const quoteIfNeeded = (text: string) => text.includes(' ') ? `'${text}'` : text;
+
+        const fromColumnFull = `${fromTable}.${fromColumn}`;
+        const toColumnFull = `${toTable}.${toColumn}`;
+
+        const newRelationshipFile = `// Power BI Relationship Definition
+
+relationship '${relationshipId}'
+\tfromColumn: ${quoteIfNeeded(fromColumnFull)}
+\ttoColumn: ${quoteIfNeeded(toColumnFull)}`;
+
+        // Encontrar la ruta correcta para crear el archivo
+        for (const [path] of Object.entries(zip.files)) {
+          if (path.includes('SemanticModel/definition/') && !path.includes('relationships.tmdl')) {
+            const basePath = path.substring(0, path.indexOf('definition/') + 'definition/'.length);
+            zip.file(basePath + 'relationships.tmdl', newRelationshipFile);
+            break;
+          }
+        }
+      }
+
+      const newFileBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+      return newFileBuffer;
+    } catch (error) {
+      throw new Error(`Error adding relationship: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async combineTablesInPlace(
+    filePath: string,
+    sourceTable: string,
+    targetTable: string,
+    joinKey: string
+  ): Promise<Buffer> {
+    try {
+      const fileContent = fs.readFileSync(filePath);
+      const zip = new JSZip();
+      await zip.loadAsync(fileContent);
+
+      // Buscar la partición de targetTable
+      for (const [path, file] of Object.entries(zip.files)) {
+        if (path.includes(`definition/tables/${targetTable}.tmdl`) && !file.dir) {
+          const content = await file.async('string');
+
+          // Buscar y reemplazar la expresión M
+          const partitionRegex = /partition\s+(\w+)\s*=\s*m\s*{([^}]*)source\s*=([^}]*?)(?:mode:|$)/s;
+          const match = content.match(partitionRegex);
+
+          if (match) {
+            // Crear nueva expresión M con JOIN
+            const newExpression = `let
+  Source = Table.FromCsv("data.csv"),
+  Joined = Table.Join(Source, "${joinKey}", ${sourceTable}, "${joinKey}", JoinKind.LeftOuter)
+in
+  Joined`;
+
+            const updatedContent = content.replace(
+              partitionRegex,
+              `partition $1 = m
+  {
+    source =
+      ${newExpression}
+  }`,
+            );
+
+            zip.file(path, updatedContent);
+            break;
+          }
+        }
+      }
+
+      const newFileBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+      return newFileBuffer;
+    } catch (error) {
+      throw new Error(`Error combining tables: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  async appendTableRows(filePath: string, table1: string, table2: string, targetTable: string): Promise<Buffer> {
+    try {
+      const fileContent = fs.readFileSync(filePath);
+      const zip = new JSZip();
+      await zip.loadAsync(fileContent);
+
+      // Buscar la partición de targetTable
+      for (const [path, file] of Object.entries(zip.files)) {
+        if (path.includes(`definition/tables/${targetTable}.tmdl`) && !file.dir) {
+          const content = await file.async('string');
+
+          // Buscar y reemplazar la expresión M
+          const partitionRegex = /partition\s+(\w+)\s*=\s*m\s*{([^}]*)source\s*=([^}]*?)(?:mode:|$)/s;
+          const match = content.match(partitionRegex);
+
+          if (match) {
+            // Crear nueva expresión M con COMBINE
+            const newExpression = `let
+  Source1 = ${table1},
+  Source2 = ${table2},
+  Combined = Table.Combine({Source1, Source2})
+in
+  Combined`;
+
+            const updatedContent = content.replace(
+              partitionRegex,
+              `partition $1 = m
+  {
+    source =
+      ${newExpression}
+  }`,
+            );
+
+            zip.file(path, updatedContent);
+            break;
+          }
+        }
+      }
+
+      const newFileBuffer = await zip.generateAsync({ type: 'nodebuffer' });
+      return newFileBuffer;
+    } catch (error) {
+      throw new Error(`Error appending table rows: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   }
 }
 

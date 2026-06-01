@@ -227,6 +227,27 @@ Usa SELECTEDVALUE para obtener valores dinámicamente.`;
 
     return content.text;
   }
+
+  async generateWithSystemPrompt(systemPrompt: string, userMessage: string) {
+    const response = await this.getClient().messages.create({
+      model: this.model,
+      max_tokens: 2048,
+      system: systemPrompt,
+      messages: [
+        {
+          role: 'user',
+          content: userMessage,
+        },
+      ],
+    });
+
+    const content = response.content[0];
+    if (content.type !== 'text') {
+      throw new Error('Unexpected response type');
+    }
+
+    return content.text;
+  }
 }
 
 let instance: ClaudeService | null = null;

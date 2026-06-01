@@ -1,3 +1,41 @@
+export interface RelationshipAction {
+  type: 'RELACIONAR' | 'COMBINAR' | 'ANEXAR';
+  fromTable: string;
+  toTable: string;
+  fromColumn: string;
+  toColumn: string;
+  rationale: string;
+  joinKey?: string;
+}
+
+export interface PBIPColumn {
+  name: string;
+  dataType: string;
+  displayFolder?: string;
+}
+
+export interface PBIPMeasure {
+  name: string;
+  expression: string;
+  displayFolder?: string;
+}
+
+export interface PBIPTable {
+  name: string;
+  columns: PBIPColumn[];
+  measures?: PBIPMeasure[];
+}
+
+export interface PBIPMetadata {
+  tables: PBIPTable[];
+  relationships: Array<{
+    fromTable: string;
+    fromColumn: string;
+    toTable: string;
+    toColumn: string;
+  }>;
+}
+
 export interface ModuleType {
   id: string;
   name: string;
@@ -63,4 +101,7 @@ export interface AppState {
   activeModule: string | null;
   isLoading: boolean;
   error: string | null;
+  repairInProgress?: boolean;
+  detectedActions?: RelationshipAction[];
+  repairStatus?: 'idle' | 'analyzing' | 'repairing' | 'complete';
 }

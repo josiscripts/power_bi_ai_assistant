@@ -76,3 +76,51 @@ export interface ClaudeMessage {
   role: 'user' | 'assistant';
   content: string;
 }
+
+export interface PBIPColumn {
+  name: string;
+  dataType: string;
+  displayFolder?: string;
+}
+
+export interface PBIPMeasure {
+  name: string;
+  expression: string;
+  displayFolder?: string;
+}
+
+export interface PBIPTable {
+  name: string;
+  columns: PBIPColumn[];
+  measures?: PBIPMeasure[];
+}
+
+export interface PBIPMetadata {
+  tables: PBIPTable[];
+  relationships: Array<{
+    fromTable: string;
+    fromColumn: string;
+    toTable: string;
+    toColumn: string;
+  }>;
+}
+
+export interface RelationshipAction {
+  type: 'RELACIONAR' | 'COMBINAR' | 'ANEXAR';
+  fromTable: string;
+  toTable: string;
+  fromColumn: string;
+  toColumn: string;
+  rationale: string;
+  joinKey?: string;
+}
+
+export interface RelationshipAnalysisResult {
+  actions: RelationshipAction[];
+  summary: string;
+  confidence: number;
+}
+
+export interface TableSample {
+  [tableName: string]: any[];
+}

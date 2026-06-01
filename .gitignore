@@ -17,6 +17,10 @@ build/
 backend/.env
 backend/.env.local
 
+# Local upload data and test artifacts
+backend/uploads/
+uploads/
+
 # IDE
 .vscode/
 .idea/

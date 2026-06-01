@@ -12,6 +12,8 @@ import * as translationController from '@controllers/translationController';
 import * as routeController from '@controllers/routeController';
 import * as filterController from '@controllers/filterController';
 import * as pbipController from '@controllers/pbipController';
+import * as relationshipRepairController from '@controllers/relationshipRepairController';
+import * as dataController from '@controllers/dataController';
 
 // Multer para upload de archivos
 const uploadDir = './uploads';
@@ -27,13 +29,15 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   fileFilter: (_req: Express.Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
-    if (file.originalname.endsWith('.zip') || file.originalname.endsWith('.pbip')) {
+    const ext = file.originalname.toLowerCase().split('.').pop();
+    const allowedFormats = ['zip', 'pbip', 'csv', 'xlsx', 'xls', 'json'];
+    if (allowedFormats.includes(ext || '')) {
       cb(null, true);
     } else {
-      cb(new Error('Solo se permiten archivos .zip o .pbip'));
+      cb(new Error('Formatos permitidos: .csv, .xlsx, .xls, .json, .zip, .pbip'));
     }
   },
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB max
+  limits: { fileSize: 10 * 1024 * 1024 * 1024 }, // 10GB max
 });
 
 // Cargar variables de entorno
@@ -41,17 +45,35 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
+const NODE_ENV = process.env.NODE_ENV || 'development';
+
+// Configuración CORS: soporta múltiples orígenes separados por coma
+const CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000').split(',').map(o => o.trim());
+
+// Función para validar orígenes CORS
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Permitir requests sin origen (como requests desde aplicaciones móviles)
+    if (!origin || CORS_ORIGINS.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`[CORS] Origen rechazado: ${origin}`);
+      callback(new Error(`CORS policy: origin ${origin} not allowed`));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 86400, // 24 horas
+};
 
 // Middleware
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-app.use(
-  cors({
-    origin: CORS_ORIGIN,
-    credentials: true,
-  })
-);
+app.use(cors(corsOptions));
+
+// Log de configuración CORS
+console.log(`[CORS] Orígenes permitidos:`, CORS_ORIGINS);
 
 // Logger middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
@@ -112,6 +134,19 @@ apiRouter.post('/pbip/remove-visualization', pbipController.removeVisualization)
 apiRouter.post('/pbip/add-measure', pbipController.addMeasure);
 apiRouter.get('/pbip/download', pbipController.downloadPBIP);
 apiRouter.post('/pbip/cleanup', pbipController.cleanupFile);
+
+// ======= RELATIONSHIP REPAIR (AUTO-FIX) =======
+apiRouter.post('/pbip/analyze-relationships', relationshipRepairController.analyzeRelationships);
+apiRouter.post('/pbip/auto-repair', relationshipRepairController.autoRepair);
+apiRouter.get('/pbip/download-repaired', relationshipRepairController.downloadRepaired);
+
+// ======= UNIVERSAL DATA EXPLORER =======
+apiRouter.post('/data/upload', upload.single('file'), dataController.uploadData);
+apiRouter.get('/data/catalog', dataController.getCatalog);
+apiRouter.get('/data/table/:tableName', dataController.getTable);
+apiRouter.get('/data/table/:tableName/data', dataController.getTablePreview);
+apiRouter.post('/data/query', dataController.queryData);
+apiRouter.post('/data/clear', dataController.clearData);
 
 // ======= GENÉRICO =======
 apiRouter.post('/prompt', async (req: Request, res: Response) => {
@@ -192,12 +227,13 @@ app.use((req: Request, res: Response) => {
 // Iniciar servidor
 const server = app.listen(PORT, () => {
   console.log(`
-╔══════════════════════════════════════════════════════════╗
-║   Power BI AI Assistant - Backend Server                 ║
-║   Escuchando en puerto ${PORT}                              ║
-║   Ambiente: ${process.env.NODE_ENV || 'development'}                          ║
-║   CORS Origen: ${CORS_ORIGIN}         ║
-╚══════════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════════╗
+║   Power BI AI Assistant - Backend Server                      ║
+║   Puerto: ${PORT}                                                    ║
+║   Ambiente: ${NODE_ENV}                                           ║
+║   CORS Orígenes: ${CORS_ORIGINS.length} permitido(s)                    ║
+║   ${CORS_ORIGINS.map(o => `✓ ${o}`).join('\n║   ')}          ║
+╚═══════════════════════════════════════════════════════════════╝
   `);
 });
 

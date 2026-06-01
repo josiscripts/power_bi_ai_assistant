@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AutoRepairWizard } from './AutoRepairWizard';
 
 interface PBIPColumn {
   name: string;
@@ -40,6 +41,7 @@ interface UploadedFile {
   filePath: string;
   metadata: PBIPMetadata;
   visualizations?: PBIPVisualization[];
+  validationWarnings?: string[];
 }
 
 export const PBIXUploader: React.FC = () => {
@@ -47,6 +49,7 @@ export const PBIXUploader: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showRepairWizard, setShowRepairWizard] = useState(false);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -161,6 +164,34 @@ export const PBIXUploader: React.FC = () => {
             </h3>
             <p className="text-gray-600">Tu proyecto PBIP ha sido analizado correctamente</p>
           </div>
+
+          {/* Advertencias de validación */}
+          {uploadedFile.validationWarnings && uploadedFile.validationWarnings.length > 0 && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+              <h4 className="font-bold text-yellow-800 mb-2">⚠️ Advertencias:</h4>
+              <ul className="space-y-1">
+                {uploadedFile.validationWarnings.map((warning, idx) => (
+                  <li key={idx} className="text-sm text-yellow-700">• {warning}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Opción de Reparación Automática */}
+          {uploadedFile.metadata.tables.length > 1 && (
+            <div className="bg-purple-50 border border-purple-200 rounded-lg p-6">
+              <h3 className="text-lg font-bold text-gray-900 mb-3">🔧 Reparación Automática de Relaciones</h3>
+              <p className="text-gray-700 mb-4">
+                Detecta automáticamente relaciones faltantes entre tablas y repara tu archivo para que los gráficos muestren datos correctamente.
+              </p>
+              <button
+                onClick={() => setShowRepairWizard(true)}
+                className="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-2 px-6 rounded"
+              >
+                🔧 Reparar Automáticamente
+              </button>
+            </div>
+          )}
 
           {/* Tablas y Campos */}
           <div className="card">
@@ -280,6 +311,18 @@ export const PBIXUploader: React.FC = () => {
             </button>
           </div>
         </div>
+      )}
+
+      {/* AutoRepairWizard Modal */}
+      {showRepairWizard && uploadedFile && (
+        <AutoRepairWizard
+          filePath={uploadedFile.filePath}
+          onClose={() => setShowRepairWizard(false)}
+          onSuccess={(newFilePath) => {
+            console.log('Archivo reparado:', newFilePath);
+            // Opcionalmente, recargar metadatos del archivo reparado
+          }}
+        />
       )}
     </div>
   );
